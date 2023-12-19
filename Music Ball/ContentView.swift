@@ -8,14 +8,20 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var resetFlag = false // State variable to trigger a reset
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundColor(.accentColor)
-            Text("Hello, world!")
+        ZStack {
+            Color.black.edgesIgnoringSafeArea(.all)
+            VStack {
+                CircleView(resetFlag: $resetFlag) // Pass the reset flag to CircleView
+                Button("Restart") {
+                    resetFlag.toggle() // Toggle the reset flag to trigger a reset
+                }
+                .foregroundColor(.white)
+            }
+            .padding()
         }
-        .padding()
     }
 }
 
