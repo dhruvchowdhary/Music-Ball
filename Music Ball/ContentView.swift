@@ -18,15 +18,15 @@ struct ContentView: View {
                 Button("Restart") {
                     resetFlag.toggle() // Toggle the reset flag to trigger a reset
                 }
-                .foregroundColor(.white)
+                .foregroundColor(.black)
             }
             .padding()
         }
     }
 }
 
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
-    }
-}
+//struct ContentView_Previews: PreviewProvider {
+//    static var previews: some View {
+//        ContentView()
+//    }
+//}

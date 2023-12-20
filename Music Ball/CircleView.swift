@@ -12,6 +12,7 @@ struct CircleView: View {
     var circleRadius: CGFloat {
         circleDiameter / 2
     }
+    let circleCenter = CGPoint(x: 180, y: 350)
     
     @Binding var resetFlag: Bool
 
@@ -21,8 +22,7 @@ struct CircleView: View {
                 .stroke(Color.accentColor, lineWidth: 4) // Adjust the line width as needed
 //                .position(CGPoint(x: UIScreen.main.bounds.width / 2, y: UIScreen.main.bounds.height / 2))
                 .frame(width: circleDiameter, height: circleDiameter) // Adjust the size of the circle as needed
-            BallView(gravity: 1, damping: 1.05, diameter: 20, position: CGPoint(x: 100, y: 363), lrgCircleRadius: circleRadius, lrgCircleCenter: CGPoint(x: 180, y: 350), resetFlag: $resetFlag)
-//            BallView(gravity: -1, damping: 0.7, lrgCircleRadius: circleRadius, lrgCircleCenter: CGPoint(x: 180, y: 363))
+            BallView(gravity: 0, damping: 1, diameter: 25, position: CGPoint(x: 100, y: 293), color: Color.red, lrgCircleRadius: circleRadius, lrgCircleCenter: circleCenter, resetFlag: $resetFlag)
         }
     }
 }
