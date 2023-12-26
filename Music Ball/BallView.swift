@@ -7,54 +7,173 @@
 
 import SwiftUI
 import AVFoundation
+import AudioToolbox
+
 
 struct BallView: View {
     @State private var ballPosition: CGPoint
     var initialBallPosition: CGPoint
     @State private var ballVelocity = CGVector(dx: 0, dy: 0)
+    @State private var ballPath = Path()
     var gravity: CGFloat
     var damping: CGFloat
     var diameter: CGFloat
     var color: Color
     var lrgCircleRadius: CGFloat
     var lrgCircleCenter: CGPoint
-    @State private var timeStep = 0.5
-    @State private var originalTimeStep = 0.5
+    @State private var timeStep = 0.7
+    @State private var originalTimeStep = 0.7
     @State private var firstBounce = true
-    var songNotes = ["f4", "f4", "d4", "a4", "d4", "f4", "d4", "a4", "d4", "f4", "c4", "a4", "c4", "f4", "c4", "a4", "c4", "e4", "c-4", "a4", "c-4", "e4", "c-4", "a4", "c-4", "e4", "c-4", "a4", "c-4", "e4", "c-4", "a5", "d4", "e4", "f4", "a5", "g4", "a5", "c4", "d4", "e4", "f4", "e4", "g4", "a5", "g4", "f4", "f4", "f4", "f4", "a5", "a5", "g4", "f4", "a5", "a5", "a5", "g4", "a5", "g4", "f4", "f4", "f4", "f4", "a5", "a5", "g4", "f4", "a5", "a5", "a5", "c-5", "c-5", "c-5", "f4", "f4", "f4", "a5", "a5", "g4", "f4", "a-5", "a-5", "a-5", "g4", "c5", "a5", "c-5", "f4", "d4", "f4", "a5", "e4", "c-4", "a5", "c-5", "d5", "d3"]
-//    var noteLength = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 6, 2, 8, 3, 3, 2, 8, 6, 2, 4, 4, 4, 4, 4, 4, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 4, 4]
-    var noteLength = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 6, 2, 8, 3, 3, 2, 8, 6, 2, 4, 4, 4, 4, 4, 5, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 4, 4,1,1,1,1,1,1,1,1,4,4]
+    var songNotes: Array<Int>
+    var noteLength: Array<Double>
     @State private var noteCount = 0
     @State private var orginalVelocity = CGVector(dx: 0, dy: 1) // Velocity without the noteLength
+    var isSound: Bool
+    var fileType: String
+    var soundLvl: String
     
     @Binding var resetFlag: Bool
+    @Binding var collision: Bool
     
     @State private var audio: AVPlayer?
 
-    init(gravity: CGFloat, damping: CGFloat, diameter: CGFloat, position: CGPoint, color: Color, lrgCircleRadius: CGFloat, lrgCircleCenter: CGPoint, resetFlag: Binding<Bool>) {
+    init(gravity: CGFloat, damping: CGFloat, diameter: CGFloat, position: CGPoint, color: Color, lrgCircleRadius: CGFloat, lrgCircleCenter: CGPoint, resetFlag: Binding<Bool>, collision: Binding<Bool>, isSound: Bool, soundLvl: String, fileType: String, songNotes: Array<Int>, noteLength: Array<Double>) {
         self.gravity = gravity
         self.damping = damping
         self.diameter = diameter
         _ballPosition = State(initialValue: position)
+        _ballPath = State(initialValue: Path { path in
+            path.move(to: position)
+        })
         self.color = color
         self.lrgCircleRadius = lrgCircleRadius
         self.lrgCircleCenter = lrgCircleCenter
         _resetFlag = resetFlag
+        _collision = collision
         self.initialBallPosition = position
+        self.isSound = isSound
+        self.soundLvl = soundLvl
+        self.fileType = fileType
+        self.songNotes = songNotes
+        self.noteLength = noteLength
+    }
+    
+    @State private var processingGraph: AUGraph?
+    @State private var midisynthNode = AUNode()
+    @State private var ioNode = AUNode()
+    @State private var midisynthUnit: AudioUnit?
+
+    func initAudio() {
+        checkError(osstatus: NewAUGraph(&processingGraph))
+        createIONode()
+        createSynthNode()
+        checkError(osstatus: AUGraphOpen(processingGraph!))
+        checkError(osstatus: AUGraphNodeInfo(processingGraph!, midisynthNode, nil, &midisynthUnit))
+
+        // Load Sound Font
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if let soundFontURL = Bundle.main.url(forResource: "IK_Berlin_Grand_Piano", withExtension: "sf2") {
+                var bankURL = Unmanaged.passUnretained(soundFontURL as CFURL).toOpaque()
+                let propertySize = UInt32(MemoryLayout<URL>.size)
+                checkError(osstatus: AudioUnitSetProperty(midisynthUnit!,
+                                                          kMusicDeviceProperty_SoundBankURL,
+                                                          kAudioUnitScope_Global,
+                                                          0,
+                                                          &bankURL,
+                                                          propertySize))
+            } else {
+                print("Sound font file not found.")
+            }
+        }
+
+        let synthOutputElement: AudioUnitElement = 0
+        let ioUnitInputElement: AudioUnitElement = 0
+
+        checkError(osstatus:
+            AUGraphConnectNodeInput(processingGraph!, midisynthNode, synthOutputElement, ioNode, ioUnitInputElement))
+
+        checkError(osstatus: AUGraphInitialize(processingGraph!))
+        checkError(osstatus: AUGraphStart(processingGraph!))
+    }
+
+
+    
+    // Function to create the I/O node
+    private func createIONode() {
+        var cd = AudioComponentDescription(
+            componentType: OSType(kAudioUnitType_Output),
+            componentSubType: OSType(kAudioUnitSubType_RemoteIO),
+            componentManufacturer: OSType(kAudioUnitManufacturer_Apple),
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        
+        checkError(osstatus: AUGraphAddNode(processingGraph!, &cd, &ioNode))
+    }
+
+    // Function to create the synth node
+    private func createSynthNode() {
+        var cd = AudioComponentDescription(
+            componentType: OSType(kAudioUnitType_MusicDevice),
+            componentSubType: OSType(kAudioUnitSubType_MIDISynth),
+            componentManufacturer: OSType(kAudioUnitManufacturer_Apple),
+            componentFlags: 0,
+            componentFlagsMask: 0
+        )
+        
+        checkError(osstatus: AUGraphAddNode(processingGraph!, &cd, &midisynthNode))
+    }
+
+    
+    func checkError(osstatus: OSStatus) {
+        if osstatus != noErr {
+            fatalError("Error: \(osstatus)")
+        }
+    }
+    
+    func noteOn(note: UInt8) {
+        if !firstBounce {
+            noteOff(note: UInt8(songNotes[noteCount - 1]))
+        }
+        let noteCommand = UInt32(0x90)
+        let pitch = UInt32(note)
+        var velocity = UInt32(127) // Adjust the velocity as needed
+        if soundLvl == "pp" {
+            velocity = 85
+        }
+        if note != 0 {
+            checkError(osstatus: MusicDeviceMIDIEvent(midisynthUnit!, noteCommand, pitch, velocity, 0))
+        }
+        noteCount += 1
+    }
+
+    func noteOff(note: UInt8) {
+        let noteCommand = UInt32(0x80)
+        let pitch = UInt32(note)
+        let velocity = UInt32(0) // Note off with zero velocity
+        checkError(osstatus: MusicDeviceMIDIEvent(midisynthUnit!, noteCommand, pitch, velocity, 0))
     }
 
     var body: some View {
+        ballPath.stroke(color, lineWidth: 1)
         Circle()
             .fill(color)
             .frame(width: diameter, height: diameter)
             .position(ballPosition)
             .onAppear {
-                // Add animation for the falling effect
-                initiateAnimation()
+                initAudio()
+//                let filePath = URL(fileURLWithPath: Bundle.main.path(forResource: "mp3Notes", ofType: nil)!).appendingPathComponent(songNotes[0]).appendingPathExtension("mp3")
+//                audio = AVPlayer.init(url: filePath)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    initiateAnimation()
+                }
             }
-            .onChange(of: resetFlag) { newValue in
-                // Reset the ball position when resetFlag changes
+            .onChange(of: resetFlag) { newValue in      // Reset the ball position when resetFlag changes
+                noteOff(note: UInt8(songNotes[noteCount]))
                 ballPosition = initialBallPosition
+                ballPath = Path { path in
+                    path.move(to: initialBallPosition)
+                }
                 ballVelocity = CGVector(dx: 0, dy: 0)
                 firstBounce = true
                 noteCount = 0
@@ -70,16 +189,26 @@ struct BallView: View {
     }
     
     func playSound() {
-        // need to declare local path as url
-        guard let folderPath = Bundle.main.path(forResource: "mp3Notes", ofType: nil) else {
-                // Handle the case where the folder path is not found
-                return
-            }
-        let filePath = URL(fileURLWithPath: folderPath).appendingPathComponent(songNotes[noteCount]).appendingPathExtension("mp3")
-        // now use declared path 'url' to initialize the player
-        audio = AVPlayer.init(url: filePath)
-        // after initialization play audio its just like click on play button
+        guard let folderPath = Bundle.main.path(forResource: fileType + "Notes", ofType: nil) else {
+            return
+        }
+//        let filePath = URL(fileURLWithPath: folderPath).appendingPathComponent(songNotes[noteCount]).appendingPathExtension(fileType)
+        
+//        audio = AVPlayer.init(url: filePath)
         audio?.play()
+        let timeScale = audio?.currentItem?.asset.duration.timescale
+        if fileType == "aiff" {
+            if soundLvl == "mf" {
+                let seektime = CMTimeMakeWithSeconds(0.695, preferredTimescale: timeScale!);
+                audio?.seek(to: seektime)
+            } else if soundLvl == "pp" {
+                let seektime = CMTimeMakeWithSeconds(0.311, preferredTimescale: timeScale!);
+                audio?.seek(to: seektime)
+            }
+        } else if fileType == "mp3" {
+            let seektime = CMTimeMakeWithSeconds(0.025, preferredTimescale: timeScale!);
+            audio?.seek(to: seektime)
+        }
         noteCount += 1
     }
     
@@ -104,12 +233,12 @@ struct BallView: View {
         
         orginalVelocity = ballVelocity
 
-        // Apply damping and note length to the new velocity
+        // Apply damping to the new velocity
         ballVelocity = CGVector(dx: ballVelocity.dx * damping, dy: ballVelocity.dy * damping)
-//        ballVelocity = CGVector(dx: ballVelocity.dx * damping * 1/CGFloat(noteLength[noteCount]), dy: ballVelocity.dy * damping * 1/CGFloat(noteLength[noteCount]))
-//        ballVelocity = CGVector(dx: ballVelocity.dx * damping - CGFloat(noteLength[noteCount]) * 1.5 + 1.5, dy: ballVelocity.dy * damping - CGFloat(noteLength[noteCount]) * 1.5 + 1.5)
+        
         // Move the ball slightly away from the collision point to avoid sticking to the edge
         ballPosition = CGPoint(x: ballPosition.x + ballVelocity.dx * CGFloat(timeStep), y: ballPosition.y + ballVelocity.dy * CGFloat(timeStep))
+
         timeStep = originalTimeStep * 1/Double(noteLength[noteCount])
         
         firstBounce = false
@@ -118,8 +247,10 @@ struct BallView: View {
     private func updateBallPosition() {
         // Update ball position and velocity based on gravity
         var acceleration = CGVector(dx: 0, dy: gravity)
-        if firstBounce || gravity != 0 {
+        if firstBounce {
             acceleration = CGVector(dx: 0, dy: 1)
+        } else if gravity != 0 {
+            acceleration = CGVector(dx: 0, dy: gravity)
         } else {
             acceleration = CGVector(dx: 0, dy: 0)
         }
@@ -127,16 +258,21 @@ struct BallView: View {
         ballPosition = CGPoint(x: ballPosition.x + ballVelocity.dx * CGFloat(timeStep), y: ballPosition.y + ballVelocity.dy * CGFloat(timeStep))
         // Check for collision with the edge of the large circle
         var distanceToCenter = ballPosition.distance(to: lrgCircleCenter)
-//        print("distanceToCenter: \(distanceToCenter)")
-//        print("Bounce - Position: \(ballPosition), Velocity: \(ballVelocity)")
         if distanceToCenter >= lrgCircleRadius - diameter/2 {
-            if noteCount < songNotes.count {
-                playSound()
+            if isSound && noteCount < songNotes.count {
+                noteOn(note: UInt8(songNotes[noteCount]))
+//                playSound()
             }
             handleCollision()
+            withAnimation(.easeInOut(duration: 0.1)) {
+                // Scale up the circle when the ball hits the edge
+                collision.toggle()
+                
+            }
             // Recalculate the distance to the center after the bounce
             distanceToCenter = ballPosition.distance(to: lrgCircleCenter)
         }
+        ballPath.addLine(to: ballPosition)
 
         // Repeat the update until the ball is out of the screen or reaches a specific condition
         if distanceToCenter <= lrgCircleRadius - diameter/2 + 50 {
